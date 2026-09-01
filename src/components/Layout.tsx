@@ -30,8 +30,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             </Link>
             <nav className="hidden sm:flex items-center gap-1">
               <NavItem to="/practice">Practice</NavItem>
-              <NavItem to="/playground">Playground</NavItem>
               <NavItem to="/pdf">PDF Practice</NavItem>
+              <NavItem to="/mydb">My Database</NavItem>
+              <NavItem to="/playground">Playground</NavItem>
               <NavItem to="/progress">Progress</NavItem>
             </nav>
           </div>

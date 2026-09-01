@@ -7,6 +7,11 @@ import Playground from "./pages/Playground";
 import ProgressPage from "./pages/ProgressPage";
 import PdfLibrary from "./pages/pdf/PdfLibrary";
 import PdfPractice from "./pages/pdf/PdfPractice";
+import { MyDbProvider } from "./mydb/MyDbContext";
+import MyDatabasePage from "./pages/mydb/MyDatabasePage";
+import MyDbEditorPage from "./pages/mydb/MyDbEditorPage";
+import MyDbQuestionsPage from "./pages/mydb/MyDbQuestionsPage";
+import MyDbQuestionPracticePage from "./pages/mydb/MyDbQuestionPracticePage";
 
 export default function App() {
   return (
@@ -20,6 +25,19 @@ export default function App() {
           <Route path="/pdf" element={<PdfLibrary />} />
           <Route path="/pdf/:setId" element={<PdfPractice />} />
           <Route path="/progress" element={<ProgressPage />} />
+          <Route
+            path="/mydb/*"
+            element={
+              <MyDbProvider>
+                <Routes>
+                  <Route path="/" element={<MyDatabasePage />} />
+                  <Route path="/editor" element={<MyDbEditorPage />} />
+                  <Route path="/questions" element={<MyDbQuestionsPage />} />
+                  <Route path="/questions/:questionId" element={<MyDbQuestionPracticePage />} />
+                </Routes>
+              </MyDbProvider>
+            }
+          />
         </Routes>
       </Layout>
     </BrowserRouter>
