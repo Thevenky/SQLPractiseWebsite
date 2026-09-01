@@ -60,7 +60,23 @@ function bigintSafe(value: unknown): unknown {
   return value;
 }
 
-function coerceValue(value: unknown, typeId: number | undefined): unknown {
+// DECIMAL columns arrive from duckdb-wasm/Arrow as raw 128-bit words (a typed array), not a JS
+// number — decode them into a plain number using the column's scale.
+function decimalToNumber(raw: ArrayLike<number>, scale: number): number {
+  let big = 0n;
+  for (let i = raw.length - 1; i >= 0; i--) {
+    big = (big << 32n) + BigInt(raw[i] >>> 0);
+  }
+  const bits = BigInt(raw.length * 32);
+  const signBit = BigInt(raw[raw.length - 1]) & 0x80000000n;
+  if (signBit) big -= 1n << bits;
+  return Number(big) / 10 ** scale;
+}
+
+function coerceValue(value: unknown, typeId: number | undefined, scale?: number): unknown {
+  if (typeId === Type.Decimal && value && typeof value === "object" && "length" in (value as ArrayLike<number>)) {
+    return decimalToNumber(value as ArrayLike<number>, scale ?? 0);
+  }
   const v = bigintSafe(value);
   if (v === null || v === undefined) return v;
   // Date / Timestamp columns come back as epoch-ms numbers (or bigints) — turn them into Date objects.
@@ -79,11 +95,12 @@ async function execAndFormat(sql: string): Promise<QueryResult> {
 
   const columns = result.schema.fields.map((f) => f.name);
   const typeIds = result.schema.fields.map((f) => f.type?.typeId as number | undefined);
+  const scales = result.schema.fields.map((f) => (f.type as unknown as { scale?: number })?.scale);
   const rows: Record<string, unknown>[] = [];
   for (const row of result.toArray()) {
     const obj: Record<string, unknown> = {};
     columns.forEach((col, i) => {
-      obj[col] = coerceValue((row as unknown as Record<string, unknown>)[col], typeIds[i]);
+      obj[col] = coerceValue((row as unknown as Record<string, unknown>)[col], typeIds[i], scales[i]);
     });
     rows.push(obj);
   }
@@ -148,6 +165,70 @@ export async function runQueryInSchema(schemaName: string, sql: string): Promise
     await connInstance.query(`SET search_path='main'`);
   }
 }
+
+// --- My Database: a fully separate DuckDB catalog (not just a schema) ---
+// DuckDB always falls back to searching the default catalog's "main" schema for unqualified
+// names, even when search_path is set to a single other schema in that same catalog — so a
+// same-catalog schema is NOT enough to keep My Database from accidentally seeing the built-in
+// practice tables. Attaching a second in-memory catalog gives it a genuinely separate namespace.
+const MYDB_CATALOG = "mydb_catalog";
+let myDbCatalogReady: Promise<void> | null = null;
+
+// Attaching a new database makes it the current default (as if `USE` was called on it) — always
+// switch back to the original default catalog right after, so My Database is never "current" and
+// can always be detached/reattached freely.
+const DEFAULT_CATALOG = "memory";
+
+async function ensureMyDbCatalogAttached(): Promise<void> {
+  if (!myDbCatalogReady) {
+    myDbCatalogReady = (async () => {
+      await ensureDb();
+      if (!connInstance) throw new Error("Database not initialized");
+      try {
+        await connInstance.query(`ATTACH ':memory:' AS ${MYDB_CATALOG}`);
+      } catch {
+        // already attached
+      }
+      await connInstance.query(`USE ${DEFAULT_CATALOG}`);
+    })();
+  }
+  return myDbCatalogReady;
+}
+
+/** Wipe My Database's catalog and rebuild it from DDL/seed SQL (used to rehydrate from storage). */
+export async function rebuildMyDbCatalog(ddl: string, seed: string): Promise<void> {
+  await ensureMyDbCatalogAttached();
+  if (!connInstance) throw new Error("Database not initialized");
+  await connInstance.query(`USE ${DEFAULT_CATALOG}`);
+  try {
+    await connInstance.query(`DETACH DATABASE IF EXISTS ${MYDB_CATALOG}`);
+  } catch {
+    // nothing to detach
+  }
+  await connInstance.query(`ATTACH ':memory:' AS ${MYDB_CATALOG}`);
+  await connInstance.query(`USE ${DEFAULT_CATALOG}`);
+  await connInstance.query(`SET search_path='${MYDB_CATALOG}.main'`);
+  try {
+    if (ddl.trim()) await connInstance.query(ddl);
+    if (seed.trim()) await connInstance.query(seed);
+  } finally {
+    await connInstance.query(`SET search_path='main'`);
+  }
+}
+
+/** Run arbitrary SQL against My Database only — unqualified names cannot resolve elsewhere. */
+export async function runQueryInMyDb(sql: string): Promise<QueryResult> {
+  await ensureMyDbCatalogAttached();
+  if (!connInstance) throw new Error("Database not initialized");
+  await connInstance.query(`SET search_path='${MYDB_CATALOG}.main'`);
+  try {
+    return await execAndFormat(sql);
+  } finally {
+    await connInstance.query(`SET search_path='main'`);
+  }
+}
+
+export { MYDB_CATALOG };
 
 export function friendlyError(rawMessage: string, _sql?: string): { message: string; columns?: string[] } {
   const colMatch = rawMessage.match(/Referenced column "?([A-Za-z0-9_]+)"?/i) ||
