@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { SQL_TYPES, type MyDbColumn } from "../../mydb/types";
+import { SQL_TYPES, type MyDbColumn, type MyDbTable } from "../../mydb/types";
 
 export default function CreateTableModal({
   onClose,
   onCreate,
+  existingTables,
 }: {
   onClose: () => void;
   onCreate: (name: string, columns: MyDbColumn[]) => Promise<void>;
+  existingTables: MyDbTable[];
 }) {
   const [name, setName] = useState("");
   const [columns, setColumns] = useState<MyDbColumn[]>([{ name: "id", type: "INTEGER", nullable: false, pk: true }]);
@@ -35,7 +37,7 @@ export default function CreateTableModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-[#0d1220] border border-slate-800 rounded-lg w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+      <div className="bg-[#0d1220] border border-slate-800 rounded-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
           <h2 className="text-sm font-semibold text-white">Create Table</h2>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-300">✕</button>
@@ -54,44 +56,76 @@ export default function CreateTableModal({
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">Columns</label>
             <div className="space-y-2">
-              <div className="grid grid-cols-[1fr_120px_70px_28px] gap-2 text-[11px] text-slate-500 px-1">
-                <span>Column Name</span>
-                <span>Data Type</span>
-                <span>Nullable</span>
-                <span></span>
-              </div>
               {columns.map((col, i) => (
-                <div key={i} className="grid grid-cols-[1fr_120px_70px_28px] gap-2 items-center">
-                  <input
-                    value={col.name}
-                    onChange={(e) => updateColumn(i, { name: e.target.value })}
-                    placeholder="column_name"
-                    className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200 font-mono"
-                  />
-                  <select
-                    value={col.type}
-                    onChange={(e) => updateColumn(i, { type: e.target.value })}
-                    className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200"
-                  >
-                    {SQL_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                  <label className="flex items-center justify-center gap-1 text-xs text-slate-400">
+                <div key={i} className="border border-slate-800 rounded-md p-2 space-y-1.5">
+                  <div className="grid grid-cols-[1fr_110px_54px_54px_24px] gap-2 items-center">
                     <input
-                      type="checkbox"
-                      checked={col.nullable}
-                      onChange={(e) => updateColumn(i, { nullable: e.target.checked })}
-                      disabled={col.pk}
+                      value={col.name}
+                      onChange={(e) => updateColumn(i, { name: e.target.value })}
+                      placeholder="column_name"
+                      className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200 font-mono"
                     />
-                  </label>
-                  <button
-                    onClick={() => removeColumn(i)}
-                    disabled={columns.length <= 1}
-                    className="text-rose-500/70 hover:text-rose-400 disabled:opacity-30 text-sm"
-                  >
-                    ✕
-                  </button>
+                    <select
+                      value={col.type}
+                      onChange={(e) => updateColumn(i, { type: e.target.value })}
+                      className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200"
+                    >
+                      {SQL_TYPES.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                    <label className="flex flex-col items-center gap-0.5 text-[10px] text-slate-400" title="Primary key">
+                      PK
+                      <input
+                        type="checkbox"
+                        checked={!!col.pk}
+                        onChange={(e) => updateColumn(i, { pk: e.target.checked, nullable: e.target.checked ? false : col.nullable })}
+                      />
+                    </label>
+                    <label className="flex flex-col items-center gap-0.5 text-[10px] text-slate-400" title="Nullable">
+                      Null?
+                      <input
+                        type="checkbox"
+                        checked={col.nullable}
+                        onChange={(e) => updateColumn(i, { nullable: e.target.checked })}
+                        disabled={col.pk}
+                      />
+                    </label>
+                    <button
+                      onClick={() => removeColumn(i)}
+                      disabled={columns.length <= 1}
+                      className="text-rose-500/70 hover:text-rose-400 disabled:opacity-30 text-sm"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={col.defaultValue ?? ""}
+                      onChange={(e) => updateColumn(i, { defaultValue: e.target.value })}
+                      placeholder="Default value (optional)"
+                      className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-300 font-mono"
+                    />
+                    <select
+                      value={col.fk ? `${col.fk.table}.${col.fk.column}` : ""}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!v) return updateColumn(i, { fk: null });
+                        const [table, column] = v.split(".");
+                        updateColumn(i, { fk: { table, column } });
+                      }}
+                      className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-300"
+                    >
+                      <option value="">Foreign key (optional)</option>
+                      {existingTables.map((t) =>
+                        t.columns.map((c) => (
+                          <option key={`${t.name}.${c.name}`} value={`${t.name}.${c.name}`}>
+                            → {t.name}.{c.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
                 </div>
               ))}
             </div>
