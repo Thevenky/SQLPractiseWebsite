@@ -12,6 +12,7 @@ import MyDatabasePage from "./pages/mydb/MyDatabasePage";
 import MyDbEditorPage from "./pages/mydb/MyDbEditorPage";
 import MyDbQuestionsPage from "./pages/mydb/MyDbQuestionsPage";
 import MyDbQuestionPracticePage from "./pages/mydb/MyDbQuestionPracticePage";
+import MyDbProgressPage from "./pages/mydb/MyDbProgressPage";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
                   <Route path="/editor" element={<MyDbEditorPage />} />
                   <Route path="/questions" element={<MyDbQuestionsPage />} />
                   <Route path="/questions/:questionId" element={<MyDbQuestionPracticePage />} />
+                  <Route path="/progress" element={<MyDbProgressPage />} />
                 </Routes>
               </MyDbProvider>
             }

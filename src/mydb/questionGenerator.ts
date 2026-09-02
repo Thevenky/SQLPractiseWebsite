@@ -1,4 +1,5 @@
 import type { MyDbColumn, MyDbTable, MyDbQuestion, MyDbDifficulty } from "./types";
+import { newQuestion as makeQuestion } from "./types";
 
 function isNumeric(type: string): boolean {
   return /INT|DECIMAL|DOUBLE|FLOAT|NUMERIC|REAL|HUGEINT/i.test(type);
@@ -15,18 +16,12 @@ function pick<T>(arr: T[], n: number): T[] {
 }
 
 function newQuestion(text: string, difficulty: MyDbDifficulty, topics: string[]): MyDbQuestion {
-  return {
-    id: `gen-${Math.random().toString(36).slice(2, 10)}`,
-    text,
-    expectedSql: null,
-    hints: [],
+  return makeQuestion({
+    title: text.length > 60 ? text.slice(0, 57) + "…" : text,
+    description: text,
     difficulty,
     topics,
-    notes: "",
-    createdAt: Date.now(),
-    attempts: 0,
-    passed: false,
-  };
+  });
 }
 
 /**
