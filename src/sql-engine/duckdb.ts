@@ -166,48 +166,62 @@ export async function runQueryInSchema(schemaName: string, sql: string): Promise
   }
 }
 
-// --- My Database: a fully separate DuckDB catalog (not just a schema) ---
+// --- My Practice: each custom database gets its own fully separate DuckDB catalog ---
 // DuckDB always falls back to searching the default catalog's "main" schema for unqualified
 // names, even when search_path is set to a single other schema in that same catalog — so a
-// same-catalog schema is NOT enough to keep My Database from accidentally seeing the built-in
-// practice tables. Attaching a second in-memory catalog gives it a genuinely separate namespace.
-const MYDB_CATALOG = "mydb_catalog";
-let myDbCatalogReady: Promise<void> | null = null;
+// same-catalog schema is NOT enough to keep a custom database from accidentally seeing the
+// built-in practice tables (or another custom database's tables). Attaching a separate in-memory
+// catalog per custom database gives each one a genuinely isolated namespace.
+const CATALOG_PREFIX = "mydb_";
+const attachedCatalogs = new Set<string>();
+const attachLocks = new Map<string, Promise<void>>();
 
 // Attaching a new database makes it the current default (as if `USE` was called on it) — always
-// switch back to the original default catalog right after, so My Database is never "current" and
-// can always be detached/reattached freely.
+// switch back to the original default catalog right after, so a custom database is never
+// "current" and can always be detached/reattached freely.
 const DEFAULT_CATALOG = "memory";
 
-async function ensureMyDbCatalogAttached(): Promise<void> {
-  if (!myDbCatalogReady) {
-    myDbCatalogReady = (async () => {
+/** Turn a database id into a safe DuckDB catalog identifier (letters/digits/underscore only). */
+export function catalogNameForDb(dbId: string): string {
+  const safe = dbId.replace(/[^a-zA-Z0-9_]/g, "_");
+  return `${CATALOG_PREFIX}${safe}`;
+}
+
+async function ensureCatalogAttached(catalog: string): Promise<void> {
+  if (attachedCatalogs.has(catalog)) return;
+  let lock = attachLocks.get(catalog);
+  if (!lock) {
+    lock = (async () => {
       await ensureDb();
       if (!connInstance) throw new Error("Database not initialized");
       try {
-        await connInstance.query(`ATTACH ':memory:' AS ${MYDB_CATALOG}`);
+        await connInstance.query(`ATTACH ':memory:' AS ${catalog}`);
       } catch {
         // already attached
       }
       await connInstance.query(`USE ${DEFAULT_CATALOG}`);
+      attachedCatalogs.add(catalog);
     })();
+    attachLocks.set(catalog, lock);
   }
-  return myDbCatalogReady;
+  await lock;
 }
 
-/** Wipe My Database's catalog and rebuild it from DDL/seed SQL (used to rehydrate from storage). */
-export async function rebuildMyDbCatalog(ddl: string, seed: string): Promise<void> {
-  await ensureMyDbCatalogAttached();
+/** Wipe a custom database's catalog and rebuild it from DDL/seed SQL (used to rehydrate from storage). */
+export async function rebuildUserCatalog(catalog: string, ddl: string, seed: string): Promise<void> {
+  await ensureCatalogAttached(catalog);
   if (!connInstance) throw new Error("Database not initialized");
   await connInstance.query(`USE ${DEFAULT_CATALOG}`);
   try {
-    await connInstance.query(`DETACH DATABASE IF EXISTS ${MYDB_CATALOG}`);
+    await connInstance.query(`DETACH DATABASE IF EXISTS ${catalog}`);
   } catch {
     // nothing to detach
   }
-  await connInstance.query(`ATTACH ':memory:' AS ${MYDB_CATALOG}`);
+  attachedCatalogs.delete(catalog);
+  await connInstance.query(`ATTACH ':memory:' AS ${catalog}`);
   await connInstance.query(`USE ${DEFAULT_CATALOG}`);
-  await connInstance.query(`SET search_path='${MYDB_CATALOG}.main'`);
+  attachedCatalogs.add(catalog);
+  await connInstance.query(`SET search_path='${catalog}.main'`);
   try {
     if (ddl.trim()) await connInstance.query(ddl);
     if (seed.trim()) await connInstance.query(seed);
@@ -216,11 +230,11 @@ export async function rebuildMyDbCatalog(ddl: string, seed: string): Promise<voi
   }
 }
 
-/** Run arbitrary SQL against My Database only — unqualified names cannot resolve elsewhere. */
-export async function runQueryInMyDb(sql: string): Promise<QueryResult> {
-  await ensureMyDbCatalogAttached();
+/** Run arbitrary SQL against one custom database only — unqualified names cannot resolve elsewhere. */
+export async function runQueryInUserCatalog(catalog: string, sql: string): Promise<QueryResult> {
+  await ensureCatalogAttached(catalog);
   if (!connInstance) throw new Error("Database not initialized");
-  await connInstance.query(`SET search_path='${MYDB_CATALOG}.main'`);
+  await connInstance.query(`SET search_path='${catalog}.main'`);
   try {
     return await execAndFormat(sql);
   } finally {
@@ -228,7 +242,20 @@ export async function runQueryInMyDb(sql: string): Promise<QueryResult> {
   }
 }
 
-export { MYDB_CATALOG };
+/** Permanently detach a custom database's catalog (used when the user deletes that database). */
+export async function dropUserCatalog(catalog: string): Promise<void> {
+  await ensureDb();
+  if (!connInstance) return;
+  try {
+    await connInstance.query(`USE ${DEFAULT_CATALOG}`);
+    await connInstance.query(`DETACH DATABASE IF EXISTS ${catalog}`);
+  } catch {
+    // ignore
+  } finally {
+    attachedCatalogs.delete(catalog);
+    attachLocks.delete(catalog);
+  }
+}
 
 export function friendlyError(rawMessage: string, _sql?: string): { message: string; columns?: string[] } {
   const colMatch = rawMessage.match(/Referenced column "?([A-Za-z0-9_]+)"?/i) ||

@@ -117,6 +117,8 @@ export default function TableViewerModal({
                   <th className="text-left px-2 py-1.5">Type</th>
                   <th className="text-left px-2 py-1.5">Nullable</th>
                   <th className="text-left px-2 py-1.5">Key</th>
+                  <th className="text-left px-2 py-1.5">Default</th>
+                  <th className="text-left px-2 py-1.5">References</th>
                 </tr>
               </thead>
               <tbody>
@@ -125,7 +127,9 @@ export default function TableViewerModal({
                     <td className="px-2 py-1.5 font-mono text-slate-200">{c.name}</td>
                     <td className="px-2 py-1.5 font-mono text-slate-400">{c.type}</td>
                     <td className="px-2 py-1.5 text-slate-400">{c.nullable ? "Yes" : "No"}</td>
-                    <td className="px-2 py-1.5 text-amber-400">{c.pk ? "PK" : ""}</td>
+                    <td className="px-2 py-1.5 text-amber-400">{c.pk ? "PK" : c.fk ? "FK" : ""}</td>
+                    <td className="px-2 py-1.5 font-mono text-slate-500">{c.defaultValue ?? ""}</td>
+                    <td className="px-2 py-1.5 font-mono text-sky-400/80">{c.fk ? `${c.fk.table}.${c.fk.column}` : ""}</td>
                   </tr>
                 ))}
               </tbody>
