@@ -3,51 +3,63 @@ import { Link } from "react-router-dom";
 import { useMyDbContext } from "../../mydb/MyDbContext";
 import MyDbNav from "./MyDbNav";
 import { generateQuestions } from "../../mydb/questionGenerator";
-import type { MyDbDifficulty, MyDbQuestion } from "../../mydb/types";
+import { TOPIC_OPTIONS, type MyDbDifficulty, type MyDbQuestion } from "../../mydb/types";
+import { newQuestion } from "../../mydb/types";
 
-const TOPIC_OPTIONS = ["SELECT", "WHERE", "ORDER BY", "GROUP BY", "HAVING", "JOIN", "Subquery", "CTE", "Window Functions", "CASE", "Aggregation", "Self Join"];
-
-function NewQuestionForm({ onSave, onCancel }: { onSave: (q: MyDbQuestion) => void; onCancel: () => void }) {
-  const [text, setText] = useState("");
-  const [expectedSql, setExpectedSql] = useState("");
-  const [difficulty, setDifficulty] = useState<MyDbDifficulty>("beginner");
-  const [topics, setTopics] = useState<string[]>([]);
-  const [notes, setNotes] = useState("");
-  const [hintsText, setHintsText] = useState("");
+function QuestionForm({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial?: MyDbQuestion;
+  onSave: (q: MyDbQuestion) => void;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [expectedSql, setExpectedSql] = useState(initial?.expectedSql ?? "");
+  const [explanation, setExplanation] = useState(initial?.explanation ?? "");
+  const [difficulty, setDifficulty] = useState<MyDbDifficulty>(initial?.difficulty ?? "beginner");
+  const [topics, setTopics] = useState<string[]>(initial?.topics ?? []);
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [hintsText, setHintsText] = useState((initial?.hints ?? []).join("\n"));
 
   const toggleTopic = (t: string) => setTopics((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]));
 
   const submit = () => {
-    if (!text.trim()) return;
-    onSave({
-      id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text: text.trim(),
-      expectedSql: expectedSql.trim() || null,
-      hints: hintsText.split("\n").map((h) => h.trim()).filter(Boolean),
-      difficulty,
-      topics,
-      notes,
-      createdAt: Date.now(),
-      attempts: 0,
-      passed: false,
-    });
+    if (!title.trim() || !description.trim()) return;
+    const hints = hintsText.split("\n").map((h) => h.trim()).filter(Boolean);
+    if (initial) {
+      onSave({ ...initial, title: title.trim(), description: description.trim(), expectedSql: expectedSql.trim() || null, explanation, hints, difficulty, topics, notes });
+    } else {
+      onSave(newQuestion({ title: title.trim(), description: description.trim(), expectedSql: expectedSql.trim() || null, explanation, hints, difficulty, topics, notes }));
+    }
   };
 
   return (
     <div className="border border-slate-800 rounded-lg p-4 bg-[#0d1220] space-y-3 mb-6">
       <div>
-        <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">Question</label>
+        <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">Question title</label>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Second-highest salary in each department"
+          className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-sm text-slate-200"
+        />
+      </div>
+      <div>
+        <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">Question description</label>
         <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
           rows={2}
-          placeholder="Find the second highest salary in each department"
+          placeholder="Find the second-highest salary in each department."
           className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-sm text-slate-200"
         />
       </div>
       <div>
         <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">
-          Expected answer SQL <span className="normal-case text-slate-600">(optional)</span>
+          Expected answer SQL <span className="normal-case text-slate-600">(optional — enables auto-grading)</span>
         </label>
         <textarea
           value={expectedSql}
@@ -59,7 +71,18 @@ function NewQuestionForm({ onSave, onCancel }: { onSave: (q: MyDbQuestion) => vo
       </div>
       <div>
         <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">
-          Hints <span className="normal-case text-slate-600">(one per line, optional)</span>
+          Explanation <span className="normal-case text-slate-600">(optional — shown alongside the solution)</span>
+        </label>
+        <textarea
+          value={explanation}
+          onChange={(e) => setExplanation(e.target.value)}
+          rows={2}
+          className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-xs text-slate-200"
+        />
+      </div>
+      <div>
+        <label className="text-xs uppercase tracking-wide text-slate-500 font-semibold block mb-1.5">
+          Hints <span className="normal-case text-slate-600">(one per line, optional — revealed one at a time)</span>
         </label>
         <textarea
           value={hintsText}
@@ -120,20 +143,60 @@ function NewQuestionForm({ onSave, onCancel }: { onSave: (q: MyDbQuestion) => vo
   );
 }
 
+type Filter = "all" | "not_attempted" | "solved" | "needs_practice" | MyDbDifficulty;
+
 export default function MyDbQuestionsPage() {
-  const { state, ready, addQuestion, deleteQuestion } = useMyDbContext();
+  const { activeDatabase, ready, addQuestion, updateQuestion, deleteQuestion } = useMyDbContext();
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
 
   if (!ready) {
     return <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">Loading your database…</div>;
   }
+  if (!activeDatabase) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <MyDbNav />
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">Create a database on the Dashboard first.</div>
+      </div>
+    );
+  }
+
+  const questions = activeDatabase.questions;
+  const editing = editingId ? questions.find((q) => q.id === editingId) : undefined;
 
   const handleGenerate = async () => {
-    const generated = generateQuestions(state.tables);
+    const generated = generateQuestions(activeDatabase.tables);
     for (const q of generated) {
       await addQuestion(q);
     }
   };
+
+  const filtered = questions.filter((q) => {
+    switch (filter) {
+      case "all":
+        return true;
+      case "not_attempted":
+        return q.attempts === 0;
+      case "solved":
+        return q.passed;
+      case "needs_practice":
+        return q.attempts > 0 && !q.passed;
+      default:
+        return q.difficulty === filter;
+    }
+  });
+
+  const filterOptions: { key: Filter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "not_attempted", label: "Not Attempted" },
+    { key: "solved", label: "Solved" },
+    { key: "needs_practice", label: "Needs Practice" },
+    { key: "beginner", label: "Beginner" },
+    { key: "intermediate", label: "Intermediate" },
+    { key: "advanced", label: "Advanced" },
+  ];
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -144,13 +207,16 @@ export default function MyDbQuestionsPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleGenerate}
-              disabled={state.tables.length === 0}
+              disabled={activeDatabase.tables.length === 0}
               className="text-xs px-3 py-1.5 rounded-md border border-sky-700/60 hover:border-sky-500 text-sky-400 disabled:opacity-40"
             >
               Generate Practice Questions
             </button>
             <button
-              onClick={() => setShowForm((s) => !s)}
+              onClick={() => {
+                setEditingId(null);
+                setShowForm((s) => !s);
+              }}
               className="text-xs px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-[#06120c] font-semibold"
             >
               + New Question
@@ -158,14 +224,14 @@ export default function MyDbQuestionsPage() {
           </div>
         </div>
 
-        {state.tables.length === 0 && (
+        {activeDatabase.tables.length === 0 && (
           <p className="text-xs text-amber-400/80 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 mb-4">
             Create at least one table on the Dashboard before writing practice questions.
           </p>
         )}
 
         {showForm && (
-          <NewQuestionForm
+          <QuestionForm
             onCancel={() => setShowForm(false)}
             onSave={async (q) => {
               await addQuestion(q);
@@ -174,23 +240,53 @@ export default function MyDbQuestionsPage() {
           />
         )}
 
-        {state.questions.length === 0 ? (
+        {editing && (
+          <QuestionForm
+            initial={editing}
+            onCancel={() => setEditingId(null)}
+            onSave={async (q) => {
+              await updateQuestion(q.id, q);
+              setEditingId(null);
+            }}
+          />
+        )}
+
+        {questions.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-4">
+            {filterOptions.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`text-[11px] px-2 py-1 rounded-md border ${
+                  filter === f.key ? "bg-slate-800 border-slate-600 text-white" : "border-slate-800 text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {questions.length === 0 ? (
           <p className="text-sm text-slate-600">No questions yet. Create one, or generate a few from your schema.</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-sm text-slate-600">No questions match this filter.</p>
         ) : (
           <div className="space-y-2">
-            {state.questions.map((q, i) => (
+            {filtered.map((q, i) => (
               <div key={q.id} className="border border-slate-800 rounded-lg p-3 bg-[#0d1220] flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm text-slate-200">
-                    {i + 1}. {q.text}
+                  <div className="text-sm text-slate-200 font-medium">
+                    {i + 1}. {q.title}
                   </div>
+                  <div className="text-xs text-slate-500 mt-0.5">{q.description}</div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded ${
                         q.passed ? "bg-emerald-500/15 text-emerald-400" : "bg-slate-800 text-slate-400"
                       }`}
                     >
-                      {q.passed ? "solved" : q.attempts > 0 ? "attempted" : "unattempted"}
+                      {q.passed ? "solved" : q.attempts > 0 ? "needs practice" : "not attempted"}
                     </span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">{q.difficulty}</span>
                     {q.topics.map((t) => (
@@ -205,6 +301,15 @@ export default function MyDbQuestionsPage() {
                   <Link to={`/mydb/questions/${q.id}`} className="text-xs text-sky-400 hover:text-sky-300">
                     Practice
                   </Link>
+                  <button
+                    onClick={() => {
+                      setShowForm(false);
+                      setEditingId(q.id);
+                    }}
+                    className="text-xs text-slate-400 hover:text-slate-200"
+                  >
+                    Edit
+                  </button>
                   <button onClick={() => deleteQuestion(q.id)} className="text-xs text-rose-500/80 hover:text-rose-400">
                     Delete
                   </button>
